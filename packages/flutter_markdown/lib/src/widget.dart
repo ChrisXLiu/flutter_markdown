@@ -150,6 +150,7 @@ abstract class MarkdownWidget extends StatefulWidget {
     Key? key,
     required this.data,
     this.selectable = false,
+    this.selectionControls,
     this.styleSheet,
     this.styleSheetTheme = MarkdownStyleSheetBaseTheme.material,
     this.syntaxHighlighter,
@@ -177,6 +178,8 @@ abstract class MarkdownWidget extends StatefulWidget {
   ///
   /// Defaults to false.
   final bool selectable;
+
+  final TextSelectionControls? selectionControls;
 
   /// The styles to use when displaying the Markdown.
   ///
@@ -325,6 +328,7 @@ class _MarkdownWidgetState extends State<MarkdownWidget>
     final MarkdownBuilder builder = MarkdownBuilder(
       delegate: this,
       selectable: widget.selectable,
+      selectionControls: widget.selectionControls,
       styleSheet: styleSheet,
       imageDirectory: widget.imageDirectory,
       imageBuilder: widget.imageBuilder,
@@ -392,6 +396,7 @@ class MarkdownBody extends MarkdownWidget {
     Key? key,
     required String data,
     bool selectable = false,
+    TextSelectionControls? selectionControls,
     MarkdownStyleSheet? styleSheet,
     MarkdownStyleSheetBaseTheme? styleSheetTheme,
     SyntaxHighlighter? syntaxHighlighter,
@@ -417,6 +422,7 @@ class MarkdownBody extends MarkdownWidget {
           key: key,
           data: data,
           selectable: selectable,
+          selectionControls: selectionControls,
           styleSheet: styleSheet,
           styleSheetTheme: styleSheetTheme,
           syntaxHighlighter: syntaxHighlighter,

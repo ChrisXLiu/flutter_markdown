@@ -95,6 +95,7 @@ class MarkdownBuilder implements md.NodeVisitor {
   MarkdownBuilder({
     required this.delegate,
     required this.selectable,
+    required this.selectionControls,
     required this.styleSheet,
     required this.imageDirectory,
     required this.imageBuilder,
@@ -115,6 +116,8 @@ class MarkdownBuilder implements md.NodeVisitor {
   ///
   /// Defaults to false.
   final bool selectable;
+
+  final TextSelectionControls? selectionControls;
 
   /// Defines which [TextStyle] objects to use for each type of element.
   final MarkdownStyleSheet styleSheet;
@@ -821,6 +824,16 @@ class MarkdownBuilder implements md.NodeVisitor {
     //Adding a unique key prevents the problem of using the same link handler for text spans with the same text
     final Key k = key == null ? UniqueKey() : Key(key);
     if (selectable) {
+      if (selectionControls) {
+        return SelectableText.rich(
+          text!,
+          selectionControls: selectionControls,
+          textScaleFactor: styleSheet.textScaleFactor,
+          textAlign: textAlign ?? TextAlign.start,
+          onTap: onTapText,
+          key: k,
+        );
+      }
       return SelectableText.rich(
         text!,
         textScaleFactor: styleSheet.textScaleFactor,
