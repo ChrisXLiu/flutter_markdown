@@ -824,7 +824,7 @@ class MarkdownBuilder implements md.NodeVisitor {
     //Adding a unique key prevents the problem of using the same link handler for text spans with the same text
     final Key k = key == null ? UniqueKey() : Key(key);
     if (selectable) {
-      if (selectionControls) {
+      if (selectionControls != null) {
         return SelectableText.rich(
           text!,
           selectionControls: selectionControls,
