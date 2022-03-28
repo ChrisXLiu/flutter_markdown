@@ -2,6 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:markdown/markdown.dart' as md;
@@ -822,7 +823,7 @@ class MarkdownBuilder implements md.NodeVisitor {
 
   Widget _buildRichText(TextSpan? text, {TextAlign? textAlign, String? key}) {
     //Adding a unique key prevents the problem of using the same link handler for text spans with the same text
-    final Key k = key == null ? UniqueKey() : Key(key);
+    final GlobalKey k = key == null ? GlobalKey() : GlobalKey(key);
     if (selectable) {
       if (selectionControls != null) {
         return SelectableText.rich(
