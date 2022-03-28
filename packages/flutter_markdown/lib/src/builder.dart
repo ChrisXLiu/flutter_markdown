@@ -828,6 +828,14 @@ class MarkdownBuilder implements md.NodeVisitor {
         return SelectableText.rich(
           text!,
           selectionControls: selectionControls,
+          onSelectionChanged: kIsWeb ? (TextSelection selection, cause) {
+            if (!selection.isCollapsed) {
+              (k
+                  .currentState as TextSelectionGestureDetectorBuilderDelegate)
+                  .editableTextKey.currentState!
+                  .showToolbar();
+            }
+          } : null,
           textScaleFactor: styleSheet.textScaleFactor,
           textAlign: textAlign ?? TextAlign.start,
           onTap: onTapText,
