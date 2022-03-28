@@ -823,7 +823,7 @@ class MarkdownBuilder implements md.NodeVisitor {
 
   Widget _buildRichText(TextSpan? text, {TextAlign? textAlign, String? key}) {
     //Adding a unique key prevents the problem of using the same link handler for text spans with the same text
-    final GlobalKey k = key == null ? GlobalKey() : GlobalKey(key);
+    final GlobalKey k = GlobalKey();
     if (selectable) {
       if (selectionControls != null) {
         return SelectableText.rich(
