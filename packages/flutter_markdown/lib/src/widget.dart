@@ -9,6 +9,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:markdown/markdown.dart' as md;
+import 'package:collection/collection.dart';
 
 import '_functions_io.dart' if (dart.library.html) '_functions_web.dart';
 
@@ -169,7 +170,10 @@ abstract class MarkdownWidget extends StatefulWidget {
     this.listItemCrossAxisAlignment =
         MarkdownListItemCrossAxisAlignment.baseline,
     this.softLineBreak = false,
+    this.textToHighlight = const <String>[],
   }) : super(key: key);
+
+  final List<String> textToHighlight;
 
   /// The Markdown to display.
   final String data;
@@ -277,6 +281,186 @@ abstract class MarkdownWidget extends StatefulWidget {
   _MarkdownWidgetState createState() => _MarkdownWidgetState();
 }
 
+// Assumption: parentSpan holds one level of children
+class TextSpanConversionProcessorState {
+  TextSpanConversionProcessorState({
+    required this.currChildIndex,
+    required this.currPosInString,
+    required this.inMatchingMode,
+  });
+  final int currChildIndex;
+  final int currPosInString;
+  final bool inMatchingMode;
+}
+class TextSpanConversionProcessor {
+  final TextSpan parentSpan;
+  late final List<TextSpan> spans;
+  late TextSpanConversionProcessorState state;
+  late final List<int> runningLength;
+  final TextStyle highlightStyle;
+
+  TextSpanConversionProcessor({
+    required this.parentSpan,
+    required this.highlightStyle,
+  }) {
+    this.spans = this.parentSpan.children! as List<TextSpan>;
+    this.state = TextSpanConversionProcessorState(
+        currChildIndex: 0,
+        currPosInString: 0,
+        inMatchingMode: false
+    );
+    var runningSum = 0;
+    this.runningLength = List<int>.generate(this.spans.length, (index) {
+      runningSum += this.spans[index].text?.length ?? 0;
+      return runningSum;
+    });
+  }
+
+
+  TextSpanConversionProcessorState advance(
+      TextSpanConversionProcessorState old) {
+    return TextSpanConversionProcessorState(
+      currChildIndex: old.currChildIndex + 1,
+      currPosInString: 0,
+      inMatchingMode: old.inMatchingMode,
+    );
+  }
+
+  TextSpanConversionProcessorState advanceLocal(
+      TextSpanConversionProcessorState old,
+      int endPos) {
+    if (endPos == endOfSpan()) {
+      return TextSpanConversionProcessorState(
+        currChildIndex: old.currChildIndex + 1,
+        currPosInString: 0,
+        inMatchingMode: old.inMatchingMode,
+      );
+    }
+    return TextSpanConversionProcessorState(
+      currChildIndex: old.currChildIndex,
+      currPosInString: endPos,
+      inMatchingMode: old.inMatchingMode,
+    );
+  }
+
+  TextSpanConversionProcessorState enterMatchingMode(
+      TextSpanConversionProcessorState old) {
+    return TextSpanConversionProcessorState(
+      currChildIndex: old.currChildIndex,
+      currPosInString: old.currPosInString,
+      inMatchingMode: true,
+    );
+  }
+
+  TextSpanConversionProcessorState exitMatchingMode(
+      TextSpanConversionProcessorState old) {
+    return TextSpanConversionProcessorState(
+      currChildIndex: old.currChildIndex,
+      currPosInString: old.currPosInString,
+      inMatchingMode: false,
+    );
+  }
+
+  int endOfSpan() {
+    return spans[state.currChildIndex].text?.length ?? 0;
+  }
+
+  void emitSpan(List<TextSpan> collector) {
+    collector.add(createTextSpan(endOfSpan()));
+    state = advance(state);
+  }
+
+  TextSpan createTextSpan(int endPos) {
+    return TextSpan(
+        text: spans[state.currChildIndex].text!
+            .substring(state.currPosInString, endPos),
+        style: state.inMatchingMode ?
+            spans[state.currChildIndex].style?.merge(highlightStyle)
+                ?? highlightStyle
+            : spans[state.currChildIndex].style
+    );
+  }
+
+  void emitPartialSpan(int endPos, List<TextSpan> collector) {
+    collector.add(createTextSpan(endPos));
+    state = advanceLocal(state, endPos);
+  }
+
+  bool reachedChildrenAt(int index) {
+    return state.currChildIndex >= index;
+  }
+
+  int fromGlobalPosToChildIndex(int globalPos) {
+    return runningLength.indexWhere((element) => element >= globalPos);
+  }
+
+  int fromGlobalPosToLocal(int globalPos) {
+    final index = fromGlobalPosToChildIndex(globalPos);
+    if (index > 0) {
+      return globalPos - runningLength[index - 1];
+    }
+    return globalPos;
+  }
+
+  int currGlobalPos() {
+    if (state.currChildIndex == 0) {
+      return state.currPosInString;
+    }
+    return runningLength[state.currChildIndex - 1] + state.currPosInString;
+  }
+
+  int findNextMatchingPosition(String pattern) {
+    return parentSpan.toPlainText().indexOf(
+        pattern, currGlobalPos());
+  }
+
+  List<TextSpan> process(String pattern) {
+    var startPosGlobal = parentSpan.toPlainText().indexOf(
+        pattern, currGlobalPos());
+
+    if (startPosGlobal == -1) {
+      // TODO(liuxi): How to log a proper error?
+      print('This should not happen. No match found in TextSpan "${parentSpan.toPlainText()}" @${currGlobalPos()} for "${pattern}"');
+      return [];
+    }
+
+    var endPosGlobal = startPosGlobal + pattern.length;
+    var startChildIndex = fromGlobalPosToChildIndex(startPosGlobal);
+    var endChildIndex = fromGlobalPosToChildIndex(endPosGlobal);
+
+    List<TextSpan> ret = [];
+    while (!reachedChildrenAt(startChildIndex)) {
+      emitSpan(ret);
+    }
+    emitPartialSpan(fromGlobalPosToLocal(startPosGlobal), ret);
+    state = enterMatchingMode(state);
+    if (startChildIndex == endChildIndex) {
+      emitPartialSpan(fromGlobalPosToLocal(endPosGlobal), ret);
+    } else {
+      emitPartialSpan(endOfSpan(), ret);
+      while (!reachedChildrenAt(endChildIndex)) {
+        emitSpan(ret);
+      }
+      emitPartialSpan(fromGlobalPosToLocal(endPosGlobal), ret);
+    }
+    state = exitMatchingMode(state);
+    return ret;
+  }
+
+  List<TextSpan> flushRemainingText() {
+    List<TextSpan> ret = [];
+    emitPartialSpan(endOfSpan(), ret);
+    while (!reachedChildrenAt(spans.length)) {
+      emitSpan(ret);
+    }
+    return ret;
+  }
+
+  bool isCompleted() {
+    return state.currChildIndex >= spans.length;
+  }
+}
+
 class _MarkdownWidgetState extends State<MarkdownWidget>
     implements MarkdownBuilderDelegate {
   List<Widget>? _children;
@@ -292,7 +476,8 @@ class _MarkdownWidgetState extends State<MarkdownWidget>
   void didUpdateWidget(MarkdownWidget oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (widget.data != oldWidget.data ||
-        widget.styleSheet != oldWidget.styleSheet) {
+        widget.styleSheet != oldWidget.styleSheet ||
+        !ListEquality().equals(widget.textToHighlight, oldWidget.textToHighlight)) {
       _parseMarkdown();
     }
   }
@@ -303,11 +488,167 @@ class _MarkdownWidgetState extends State<MarkdownWidget>
     super.dispose();
   }
 
+  TextSpan? convertTextSpanToSpans(
+      TextSpan textSpan,
+      List<String> patterns,
+      TextStyle? existingStyle,
+      TextStyle highlightStyle) {
+    TextSpanConversionProcessor processor = TextSpanConversionProcessor(
+        parentSpan: textSpan,
+        highlightStyle: highlightStyle);
+    var foundMatches = false;
+    List<InlineSpan> children = [];
+    Set<String> unusedPatterns = Set.from(patterns);
+    while (!processor.isCompleted() && unusedPatterns.isNotEmpty) {
+      int earliestStart = -1;
+      String? earliestPattern = null;
+      unusedPatterns.forEach((pattern) {
+        var start = processor.findNextMatchingPosition(pattern);
+        if (start == -1) {
+          return;
+        }
+        if (earliestStart == -1 || start < earliestStart) {
+          earliestStart = start;
+          earliestPattern = pattern;
+        }
+      });
+      if (earliestPattern == null) {
+        // No more matching patterns
+        break;
+      }
+      children.addAll(processor.process(earliestPattern!));
+      foundMatches = true;
+      unusedPatterns.remove(earliestPattern!);
+    }
+    children.addAll(processor.flushRemainingText());
+    if (!foundMatches) {
+      return null;
+    }
+    return TextSpan(children: children, style: existingStyle);
+  }
+
+  TextSpan? convertTextToSpans(
+      String input,
+      List<String> patterns,
+      TextStyle? existingStyle,
+      TextStyle highlightStyle) {
+    var currPosInString = 0;
+    var foundMatches = false;
+    List<InlineSpan> children = [];
+    Set<String> unusedPatterns = Set.from(patterns);
+    while (currPosInString < input.length && unusedPatterns.isNotEmpty) {
+      int earliestStart = -1;
+      String? earliestPattern = null;
+      unusedPatterns.forEach((pattern) {
+        var start = input.indexOf(pattern, currPosInString);
+        if (start == -1) {
+          return;
+        }
+        if (earliestStart == -1 || start < earliestStart) {
+          earliestStart = start;
+          earliestPattern = pattern;
+        }
+      });
+      if (earliestPattern == null) {
+        // No more matching patterns
+        break;
+      }
+      var end = earliestStart + earliestPattern!.length;
+      children.add(TextSpan(text: input.substring(currPosInString, earliestStart)));
+      children.add(TextSpan(text: input.substring(earliestStart, end), style: highlightStyle));
+      foundMatches = true;
+      currPosInString = end;
+      unusedPatterns.remove(earliestPattern!);
+    }
+    if (currPosInString < input.length) {
+      children.add(TextSpan(text: input.substring(currPosInString, input.length)));
+    }
+    if (!foundMatches) {
+      return null;
+    }
+    return TextSpan(children: children, style: existingStyle);
+  }
+
+  Widget? highlightText(Widget element) {
+    if (widget.textToHighlight.isEmpty) {
+      return null;
+    }
+
+    if (element is SelectableText) {
+      final st = (element as SelectableText);
+      final innerText = st.textSpan?.text;
+      if (innerText != null) {
+        // Leaf node
+        TextSpan? textSpan = convertTextToSpans(
+          innerText,
+          widget.textToHighlight,
+          st.textSpan?.style,
+          st.textSpan?.style?.merge(
+              TextStyle(backgroundColor: Theme.of(context).textSelectionTheme.selectionColor)
+          ) ?? TextStyle(backgroundColor: Theme.of(context).textSelectionTheme.selectionColor),
+        );
+        if (textSpan != null) {
+          final GlobalKey k = GlobalKey();
+          return SelectableText.rich(
+              textSpan,
+              key: k,
+              selectionControls: widget.selectionControls,
+          );
+        }
+        return null;
+      }
+      if (st.textSpan != null && st.textSpan!.children != null) {
+        TextSpan? textSpan = convertTextSpanToSpans(
+          st.textSpan!,
+          widget.textToHighlight,
+          st.textSpan?.style,
+          st.textSpan?.style?.merge(
+              TextStyle(backgroundColor: Theme.of(context).textSelectionTheme.selectionColor)
+          ) ?? TextStyle(backgroundColor: Theme.of(context).textSelectionTheme.selectionColor),
+        );
+        if (textSpan != null) {
+          final GlobalKey k = GlobalKey();
+          return SelectableText.rich(
+              textSpan,
+              key: k,
+              selectionControls: widget.selectionControls,
+              style: st.textSpan?.style?.merge(
+                  TextStyle(fontWeight: FontWeight.bold, color: Colors.teal)
+              )
+          );
+        }
+      }
+      return null;
+    }
+
+    try {
+      final obj = (element as dynamic);
+      for (var i = 0; i < obj.children.length; i++) {
+        final updated = highlightText(obj.children[i]);
+        if (updated != null) {
+          obj.children[i] = updated;
+        }
+      }
+    } catch (NoSuchMethodError, e) {
+      // Pass
+    }
+
+    try {
+      final obj = (element as dynamic);
+      final updated = highlightText(obj.child);
+      if (updated != null) {
+        obj.child = updated;
+      }
+    } catch (NoSuchMethodError, e) {
+      // Pass
+    }
+  }
+
   void _parseMarkdown() {
     final MarkdownStyleSheet fallbackStyleSheet =
-        kFallbackStyle(context, widget.styleSheetTheme);
+    kFallbackStyle(context, widget.styleSheetTheme);
     final MarkdownStyleSheet styleSheet =
-        fallbackStyleSheet.merge(widget.styleSheet);
+    fallbackStyleSheet.merge(widget.styleSheet);
 
     _disposeRecognizers();
 
@@ -343,6 +684,15 @@ class _MarkdownWidgetState extends State<MarkdownWidget>
     );
 
     _children = builder.build(astNodes);
+
+    if (_children != null) {
+      for (var i = 0; i < _children!.length; i++) {
+        Widget? updated = highlightText(_children![i]);
+        if (updated != null) {
+          _children![i] = updated;
+        }
+      }
+    }
   }
 
   void _disposeRecognizers() {
@@ -418,6 +768,7 @@ class MarkdownBody extends MarkdownWidget {
     this.shrinkWrap = true,
     bool fitContent = true,
     bool softLineBreak = false,
+    List<String> textToHighlight = const <String>[],
   }) : super(
           key: key,
           data: data,
@@ -440,6 +791,7 @@ class MarkdownBody extends MarkdownWidget {
           bulletBuilder: bulletBuilder,
           fitContent: fitContent,
           softLineBreak: softLineBreak,
+          textToHighlight: textToHighlight,
         );
 
   /// See [ScrollView.shrinkWrap]
