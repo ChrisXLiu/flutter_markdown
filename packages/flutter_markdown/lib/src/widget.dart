@@ -329,13 +329,6 @@ class TextSpanConversionProcessor {
   TextSpanConversionProcessorState advanceLocal(
       TextSpanConversionProcessorState old,
       int endPos) {
-    if (endPos == endOfSpan()) {
-      return TextSpanConversionProcessorState(
-        currChildIndex: old.currChildIndex + 1,
-        currPosInString: 0,
-        inMatchingMode: old.inMatchingMode,
-      );
-    }
     return TextSpanConversionProcessorState(
       currChildIndex: old.currChildIndex,
       currPosInString: endPos,
@@ -366,8 +359,14 @@ class TextSpanConversionProcessor {
   }
 
   void emitSpan(List<TextSpan> collector) {
-    collector.add(createTextSpan(endOfSpan()));
+    if (canCreateNonEmptySpan(endOfSpan())) {
+      collector.add(createTextSpan(endOfSpan()));
+    }
     state = advance(state);
+  }
+
+  bool canCreateNonEmptySpan(int endPos) {
+    return endPos > state.currPosInString;
   }
 
   TextSpan createTextSpan(int endPos) {
@@ -382,7 +381,19 @@ class TextSpanConversionProcessor {
   }
 
   void emitPartialSpan(int endPos, List<TextSpan> collector) {
-    collector.add(createTextSpan(endPos));
+    if (state.currPosInString == endOfSpan()) {
+      // Reaching the end of the current span.
+      // Nothing to emit. Advance to the next span.
+      state = TextSpanConversionProcessorState(
+        currChildIndex: state.currChildIndex + 1,
+        currPosInString: 0,
+        inMatchingMode: state.inMatchingMode,
+      );
+      return;
+    }
+    if (canCreateNonEmptySpan(endPos)) {
+      collector.add(createTextSpan(endPos));
+    }
     state = advanceLocal(state, endPos);
   }
 
@@ -441,13 +452,18 @@ class TextSpanConversionProcessor {
       while (!reachedChildrenAt(endChildIndex)) {
         emitSpan(ret);
       }
-      emitPartialSpan(fromGlobalPosToLocal(endPosGlobal), ret);
+      if (state.currChildIndex == endChildIndex) {
+        emitPartialSpan(fromGlobalPosToLocal(endPosGlobal), ret);
+      }
     }
     state = exitMatchingMode(state);
     return ret;
   }
 
   List<TextSpan> flushRemainingText() {
+    if (state.currChildIndex >= spans.length) {
+      return [];
+    }
     List<TextSpan> ret = [];
     emitPartialSpan(endOfSpan(), ret);
     while (!reachedChildrenAt(spans.length)) {
@@ -554,7 +570,10 @@ class _MarkdownWidgetState extends State<MarkdownWidget>
         break;
       }
       var end = earliestStart + earliestPattern!.length;
-      children.add(TextSpan(text: input.substring(currPosInString, earliestStart)));
+      if (earliestStart > currPosInString) {
+        children.add(
+            TextSpan(text: input.substring(currPosInString, earliestStart)));
+      }
       children.add(TextSpan(text: input.substring(earliestStart, end), style: highlightStyle));
       foundMatches = true;
       currPosInString = end;
@@ -612,9 +631,6 @@ class _MarkdownWidgetState extends State<MarkdownWidget>
               textSpan,
               key: k,
               selectionControls: widget.selectionControls,
-              style: st.textSpan?.style?.merge(
-                  TextStyle(fontWeight: FontWeight.bold, color: Colors.teal)
-              )
           );
         }
       }
